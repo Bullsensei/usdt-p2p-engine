@@ -4,7 +4,16 @@ const cors = require("cors");
 const axios = require("axios");
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://usdt-p2p-engine-erli.vercel.app", // Frontend URL của bạn
+      "https://*.vercel.app",
+    ],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // ============================================
@@ -31,7 +40,7 @@ async function fetchBinanceAds(tradeType) {
     page: 1,
     payTypes: [],
     publisherType: null,
-    rows: 20, // Fetch 20 ads
+    rows: 10, // Fetch 20 ads
     tradeType: tradeType, // 'BUY' or 'SELL'
   };
 
@@ -41,7 +50,7 @@ async function fetchBinanceAds(tradeType) {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0",
       },
-      timeout: 10000,
+      timeout: 30000,
     });
 
     if (response.data?.data) {
