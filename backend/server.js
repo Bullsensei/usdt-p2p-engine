@@ -5,12 +5,10 @@ const axios = require("axios");
 const app = express();
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://usdt-p2p-engine-erli.vercel.app", // Frontend URL của bạn
-      "https://*.vercel.app",
-    ],
-    credentials: true,
+    origin: "*", // Allow all origins for testing
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
   })
 );
 app.use(express.json());
@@ -204,6 +202,7 @@ async function updateSnapshots() {
 
   // Binance BUY
   try {
+    console.log("Fetching Binance BUY ads...");
     const buyAds = await fetchBinanceAds("SELL");
     cache.binance_buy = {
       data: buyAds,
@@ -214,11 +213,12 @@ async function updateSnapshots() {
     console.log(`✅ Binance BUY ads: ${buyAds.length} offers`);
   } catch (error) {
     cache.binance_buy.error = error.message;
-    console.error("❌ Binance BUY failed");
+    console.error("❌ Binance BUY failed:", error.message);
   }
 
   // Binance SELL
   try {
+    console.log("Fetching Binance SELL ads...");
     const sellAds = await fetchBinanceAds("BUY");
     cache.binance_sell = {
       data: sellAds,
@@ -229,11 +229,12 @@ async function updateSnapshots() {
     console.log(`✅ Binance SELL ads: ${sellAds.length} offers`);
   } catch (error) {
     cache.binance_sell.error = error.message;
-    console.error("❌ Binance SELL failed");
+    console.error("❌ Binance SELL failed:", error.message);
   }
 
   // OKX BUY
   try {
+    console.log("Fetching OKX BUY ads...");
     const buyAds = await fetchOKXAds("SELL");
     cache.okx_buy = {
       data: buyAds,
@@ -244,11 +245,12 @@ async function updateSnapshots() {
     console.log(`✅ OKX BUY ads: ${buyAds.length} offers`);
   } catch (error) {
     cache.okx_buy.error = error.message;
-    console.error("❌ OKX BUY failed");
+    console.error("❌ OKX BUY failed:", error.message);
   }
 
   // OKX SELL
   try {
+    console.log("Fetching OKX SELL ads...");
     const sellAds = await fetchOKXAds("BUY");
     cache.okx_sell = {
       data: sellAds,
@@ -259,8 +261,10 @@ async function updateSnapshots() {
     console.log(`✅ OKX SELL ads: ${sellAds.length} offers`);
   } catch (error) {
     cache.okx_sell.error = error.message;
-    console.error("❌ OKX SELL failed");
+    console.error("❌ OKX SELL failed:", error.message);
   }
+
+  console.log("📊 Snapshot update complete");
 }
 
 // ============================================
@@ -351,6 +355,17 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Manual refresh endpoint
+app.post("/api/refresh", async (req, res) => {
+  console.log("Manual refresh triggered");
+  res.json({ status: "refresh started" });
+
+  // Update in background
+  updateSnapshots().catch((err) => {
+    console.error("Manual refresh failed:", err);
+  });
+});
+
 app.post("/api/search", (req, res) => {
   const { action, amount, currency } = req.body;
 
@@ -370,11 +385,24 @@ app.post("/api/search", (req, res) => {
   const binanceKey = action === "buy" ? "binance_buy" : "binance_sell";
   const okxKey = action === "buy" ? "okx_buy" : "okx_sell";
 
-  const allAds = [...cache[binanceKey].data, ...cache[okxKey].data];
+  const allAds = [
+    ...(cache[binanceKey].data || []),
+    ...(cache[okxKey].data || []),
+  ];
 
   if (allAds.length === 0) {
+    // Try to update snapshots immediately
+    console.log("No data available, triggering immediate update...");
+    updateSnapshots()
+      .then(() => {
+        console.log("Snapshot update completed");
+      })
+      .catch((err) => {
+        console.error("Snapshot update failed:", err);
+      });
+
     return res.status(503).json({
-      error: "No data available from exchanges",
+      error: "No data available. Please try again in a few seconds.",
       details: {
         binance: cache[binanceKey].error,
         okx: cache[okxKey].error,
