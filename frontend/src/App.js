@@ -28,33 +28,20 @@ export default function P2PComparison() {
     setResults(null);
 
     try {
-      const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
-      console.log("API_URL:", API_URL);
-      console.log("Searching with:", {
-        action,
-        amount: parseFloat(amount),
-        currency,
-      });
-
-      const response = await fetch(`${API_URL}/api/search`, {
+      const response = await fetch("http://localhost:3001/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, amount: parseFloat(amount), currency }),
       });
 
-      console.log("Response status:", response.status);
-
       if (!response.ok) {
         const err = await response.json();
-        console.error("API Error:", err);
         throw new Error(err.error || "Search failed");
       }
 
       const data = await response.json();
-      console.log("Search results:", data);
       setResults(data);
     } catch (err) {
-      console.error("Search error:", err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -288,14 +275,14 @@ export default function P2PComparison() {
                     <div>
                       <div className="text-slate-600">Min - Max</div>
                       <div className="font-medium text-slate-900">
-                        {formatNumber(offer.limits.min)} -{" "}
-                        {formatNumber(offer.limits.max)}
+                        {formatNumber(offer.limits.min.toFixed(0))} -{" "}
+                        {formatNumber(offer.limits.max.toFixed(0))}
                       </div>
                     </div>
                     <div>
-                      <div className="text-slate-600">Match Score</div>
-                      <div className="font-medium text-green-600">
-                        {offer.score}/100
+                      <div className="text-slate-600">Exchange</div>
+                      <div className="font-medium text-blue-600">
+                        {offer.exchange}
                       </div>
                     </div>
                   </div>
