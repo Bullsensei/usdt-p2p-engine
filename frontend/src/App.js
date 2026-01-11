@@ -28,8 +28,7 @@ export default function P2PComparison() {
     setResults(null);
 
     try {
-      const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
-      const response = await fetch(`${API_URL}/api/search`, {
+      const response = await fetch("http://localhost:3001/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, amount: parseFloat(amount), currency }),
@@ -183,7 +182,13 @@ export default function P2PComparison() {
                     You {action === "buy" ? "pay" : "receive"}
                   </div>
                   <div className="text-3xl font-bold">
-                    {formatNumber(results.estimate?.vnd || 0)} VND
+                    {action === "buy"
+                      ? `${formatNumber(results.estimate?.output?.pay || 0)} ${
+                          results.estimate?.output?.payCurrency
+                        }`
+                      : `${formatNumber(
+                          results.estimate?.output?.receive || 0
+                        )} ${results.estimate?.output?.receiveCurrency}`}
                   </div>
                 </div>
                 <div>
@@ -191,7 +196,13 @@ export default function P2PComparison() {
                     You {action === "buy" ? "receive" : "pay"}
                   </div>
                   <div className="text-3xl font-bold">
-                    {(results.estimate?.usdt || 0).toFixed(2)} USDT
+                    {action === "buy"
+                      ? `${(results.estimate?.output?.receive || 0).toFixed(
+                          2
+                        )} ${results.estimate?.output?.receiveCurrency}`
+                      : `${formatNumber(results.estimate?.output?.pay || 0)} ${
+                          results.estimate?.output?.payCurrency
+                        }`}
                   </div>
                 </div>
               </div>
@@ -294,7 +305,7 @@ export default function P2PComparison() {
                     className="block w-full bg-slate-900 text-white py-3 rounded-lg font-medium hover:bg-slate-800 transition-colors text-center"
                   >
                     <span className="flex items-center justify-center gap-2">
-                      View on Binance
+                      View on {offer.exchange}
                       <ExternalLink className="w-4 h-4" />
                     </span>
                   </a>
