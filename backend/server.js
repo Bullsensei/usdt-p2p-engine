@@ -3,14 +3,7 @@ const cors = require("cors");
 const axios = require("axios");
 
 const app = express();
-app.use(
-  cors({
-    origin: "*", // Allow all origins for testing
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: false,
-  })
-);
+app.use(cors());
 app.use(express.json());
 
 // ============================================
@@ -35,35 +28,62 @@ async function fetchBinanceAds(tradeType) {
   const payload = {
     asset: "USDT",
     fiat: "VND",
-    merchantCheck: false,
     page: 1,
-    payTypes: [],
-    publisherType: null,
     rows: 20,
     tradeType: tradeType,
+    payTypes: [],
+    countries: [],
+    publisherType: "merchant",
+    filterType: "tradable",
+    periods: [],
+    additionalKycVerifyFilter: 0,
+    classifies: ["mass", "profession", "fiat_trade"],
   };
 
   const methods = [
-    // Method 1: Direct call
+    // Method 1: Direct call with full headers
     async () => {
       return await axios.post(url, payload, {
         headers: {
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
           "Content-Type": "application/json",
-          Accept: "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           Origin: "https://p2p.binance.com",
-          Referer: "https://p2p.binance.com/",
+          Referer: "https://p2p.binance.com/en",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+          "bnc-location": "",
+          "bnc-time-zone": "Asia/Bangkok",
+          c2ctype: "c2c_web",
+          clienttype: "web",
+          lang: "en",
+          "sec-ch-ua":
+            '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": '"Windows"',
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
         },
         timeout: 30000,
       });
     },
 
-    // Method 2: Via CORS proxy
+    // Method 2: ScraperAPI (better than CORS proxy)
     async () => {
-      const proxyUrl = "https://api.allorigins.win/raw?url=";
+      // Free tier: 1000 calls/month
+      const scraperApiKey = process.env.SCRAPER_API_KEY || "demo";
+      const proxyUrl = `http://api.scraperapi.com/?api_key=${scraperApiKey}&url=`;
+
       return await axios.post(proxyUrl + encodeURIComponent(url), payload, {
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Original-Headers": JSON.stringify({
+            Accept: "*/*",
+            Origin: "https://p2p.binance.com",
+            Referer: "https://p2p.binance.com/en",
+          }),
+        },
         timeout: 30000,
       });
     },
@@ -120,6 +140,7 @@ async function fetchOKXAds(tradeType) {
   };
 
   try {
+    console.log(`Fetching OKX ${tradeType} with side=${side}`);
     const response = await axios.get(url, {
       params,
       headers: {
@@ -130,14 +151,28 @@ async function fetchOKXAds(tradeType) {
       timeout: 30000,
     });
 
+    console.log(`OKX response status: ${response.status}`);
+
     if (response.data?.data?.buy || response.data?.data?.sell) {
       const ads = response.data.data[side] || [];
+      console.log(`OKX ${tradeType} returned ${ads.length} ads`);
       return normalizeOKXAds(ads, tradeType);
     }
 
+    console.error(
+      `OKX ${tradeType} invalid structure:`,
+      JSON.stringify(response.data).substring(0, 200)
+    );
     throw new Error("Invalid OKX response structure");
   } catch (error) {
-    console.error(`Error fetching OKX ${tradeType} ads:`, error.message);
+    console.error(`❌ OKX ${tradeType} error:`, error.message);
+    if (error.response) {
+      console.error(`OKX response status: ${error.response.status}`);
+      console.error(
+        `OKX response data:`,
+        JSON.stringify(error.response.data).substring(0, 200)
+      );
+    }
     throw error;
   }
 }
@@ -363,6 +398,38 @@ app.post("/api/refresh", async (req, res) => {
   // Update in background
   updateSnapshots().catch((err) => {
     console.error("Manual refresh failed:", err);
+  });
+});
+
+// Debug endpoint - shows detailed cache info
+app.get("/api/debug", (req, res) => {
+  res.json({
+    cache: {
+      binance_buy: {
+        count: cache.binance_buy.data.length,
+        timestamp: cache.binance_buy.timestamp,
+        error: cache.binance_buy.error,
+        sample: cache.binance_buy.data.slice(0, 2),
+      },
+      binance_sell: {
+        count: cache.binance_sell.data.length,
+        timestamp: cache.binance_sell.timestamp,
+        error: cache.binance_sell.error,
+        sample: cache.binance_sell.data.slice(0, 2),
+      },
+      okx_buy: {
+        count: cache.okx_buy.data.length,
+        timestamp: cache.okx_buy.timestamp,
+        error: cache.okx_buy.error,
+        sample: cache.okx_buy.data.slice(0, 2),
+      },
+      okx_sell: {
+        count: cache.okx_sell.data.length,
+        timestamp: cache.okx_sell.timestamp,
+        error: cache.okx_sell.error,
+        sample: cache.okx_sell.data.slice(0, 2),
+      },
+    },
   });
 });
 
