@@ -200,7 +200,7 @@ function normalizeAds(rawData, tradeType, exchange) {
       const maxLimitUSDT = maxLimitVND / price;
 
       return {
-        id: `${exchange}_${adv.advNo}`,
+        id: `binance_${adv.advNo}`,
         exchange: "Binance",
         type: tradeType,
         price: price,
@@ -328,9 +328,10 @@ async function updateSnapshots() {
 }
 
 // ============================================
-// DECISION ENGINE
+// SIMPLE RANKING - SORT BY PRICE ONLY
 // ============================================
 function rankOffers(ads, userAmount, isBuying) {
+  // Filter: Only ads that can handle the user's amount
   const compatible = ads.filter((ad) => {
     return (
       ad.availableAmount >= userAmount &&
@@ -339,33 +340,14 @@ function rankOffers(ads, userAmount, isBuying) {
     );
   });
 
-  const scored = compatible.map((ad) => {
-    let score = 0;
-
-    // Price (40 points)
-    if (isBuying) {
-      const priceRank = compatible.findIndex((a) => a.price >= ad.price) + 1;
-      score += (40 * (compatible.length - priceRank + 1)) / compatible.length;
-    } else {
-      const priceRank = compatible.findIndex((a) => a.price <= ad.price) + 1;
-      score += (40 * (compatible.length - priceRank + 1)) / compatible.length;
-    }
-
-    // Completion rate (30 points)
-    score += (ad.completionRate / 100) * 30;
-
-    // Available amount buffer (15 points)
-    const buffer = ad.availableAmount / userAmount;
-    score += Math.min(buffer / 3, 1) * 15;
-
-    // Total orders (15 points)
-    const orderScore = Math.min(ad.totalOrders / 100, 1);
-    score += orderScore * 15;
-
-    return { ...ad, score };
-  });
-
-  return scored.sort((a, b) => b.score - a.score);
+  // Sort by price only
+  if (isBuying) {
+    // Buying: Lower price is better (sort ascending)
+    return compatible.sort((a, b) => a.price - b.price);
+  } else {
+    // Selling: Higher price is better (sort descending)
+    return compatible.sort((a, b) => b.price - a.price);
+  }
 }
 
 // ============================================
@@ -521,11 +503,31 @@ app.post("/api/search", (req, res) => {
     usdtAmount = vndAmount / bestPrice;
   }
 
-  // Run decision engine
+  // Run ranking - sort by price only
   const rankedOffers = rankOffers(allAds, usdtAmount, action === "buy");
   const top5 = rankedOffers.slice(0, 5);
 
-  // Calculate actual receive amount from top offer
+  // Calculate estimate using BEST PRICE (first ranked offer)
+  let estimatedPay, estimatedReceive, payCurrency, receiveCurrency;
+
+  if (top5.length > 0) {
+    const bestPrice = top5[0].price; // Best price from top offer
+
+    if (action === "buy") {
+      // Buying USDT: pay VND, receive USDT
+      estimatedPay = usdtAmount * bestPrice; // VND to pay
+      estimatedReceive = usdtAmount; // USDT to receive
+      payCurrency = "VND";
+      receiveCurrency = "USDT";
+    } else {
+      // Selling USDT: pay USDT, receive VND
+      estimatedPay = usdtAmount; // USDT to pay
+      estimatedReceive = usdtAmount * bestPrice; // VND to receive
+      payCurrency = "USDT";
+      receiveCurrency = "VND";
+    }
+  }
+
   const actualReceive =
     top5.length > 0
       ? {
@@ -533,28 +535,22 @@ app.post("/api/search", (req, res) => {
             amount: amount,
             currency: currency,
           },
-          output:
-            action === "buy"
-              ? {
-                  pay: currency === "USDT" ? amount : vndAmount,
-                  payCurrency: currency === "USDT" ? "USDT" : "VND",
-                  receive: currency === "USDT" ? vndAmount : usdtAmount,
-                  receiveCurrency: currency === "USDT" ? "VND" : "USDT",
-                }
-              : {
-                  pay: currency === "USDT" ? amount : usdtAmount,
-                  payCurrency: currency === "USDT" ? "USDT" : "VND",
-                  receive: currency === "USDT" ? vndAmount : amount,
-                  receiveCurrency: currency === "USDT" ? "VND" : "USDT",
-                },
+          output: {
+            pay: estimatedPay,
+            payCurrency: payCurrency,
+            receive: estimatedReceive,
+            receiveCurrency: receiveCurrency,
+            bestPrice: top5[0].price,
+          },
         }
       : null;
 
   res.json({
     query: { action, inputAmount: amount, inputCurrency: currency },
     estimate: actualReceive,
-    offers: top5.map((offer) => ({
+    offers: top5.map((offer, index) => ({
       id: offer.id,
+      rank: index + 1,
       exchange: offer.exchange,
       merchant: offer.merchantName,
       price: offer.price,
@@ -563,7 +559,6 @@ app.post("/api/search", (req, res) => {
       completionRate: offer.completionRate.toFixed(1) + "%",
       totalOrders: offer.totalOrders,
       paymentMethods: offer.paymentMethods,
-      score: offer.score.toFixed(1),
       deepLink: offer.deepLink,
     })),
     meta: {
