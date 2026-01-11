@@ -231,19 +231,24 @@ function normalizeOKXAds(rawData, tradeType) {
       const minLimitUSDT = minLimitVND / price;
       const maxLimitUSDT = maxLimitVND / price;
 
+      // Fix completion rate: already in decimal (0.8495 = 84.95%)
+      const completionRate = parseFloat(ad.completedRate) || 0;
+
       return {
         id: `okx_${ad.id}`,
         exchange: "OKX",
         type: tradeType,
         price: price,
-        availableAmount: availableAmount, // Already in USDT
-        minLimit: minLimitUSDT, // Convert from VND
-        maxLimit: maxLimitUSDT, // Convert from VND
+        availableAmount: availableAmount,
+        minLimit: minLimitUSDT,
+        maxLimit: maxLimitUSDT,
         merchantName: ad.nickName,
-        completionRate: (parseFloat(ad.completedRate) || 0) * 100,
+        completionRate: completionRate * 100, // Convert 0.8495 to 84.95
         totalOrders: parseInt(ad.completedOrderQuantity) || 0,
         paymentMethods: ad.paymentMethods || [],
-        deepLink: `https://www.okx.com/p2p-markets/${ad.id}`,
+        deepLink: `https://www.okx.com/vi/p2p-markets/usdt/vnd/${tradeType.toLowerCase()}/${
+          ad.id
+        }`,
       };
     })
     .filter((ad) => ad.price > 0 && ad.availableAmount > 0);
@@ -520,11 +525,29 @@ app.post("/api/search", (req, res) => {
   const rankedOffers = rankOffers(allAds, usdtAmount, action === "buy");
   const top5 = rankedOffers.slice(0, 5);
 
+  // Calculate actual receive amount from top offer
   const actualReceive =
     top5.length > 0
-      ? action === "buy"
-        ? { usdt: usdtAmount, vnd: usdtAmount * top5[0].price }
-        : { usdt: vndAmount / top5[0].price, vnd: vndAmount }
+      ? {
+          input: {
+            amount: amount,
+            currency: currency,
+          },
+          output:
+            action === "buy"
+              ? {
+                  pay: currency === "USDT" ? amount : vndAmount,
+                  payCurrency: currency === "USDT" ? "USDT" : "VND",
+                  receive: currency === "USDT" ? vndAmount : usdtAmount,
+                  receiveCurrency: currency === "USDT" ? "VND" : "USDT",
+                }
+              : {
+                  pay: currency === "USDT" ? amount : usdtAmount,
+                  payCurrency: currency === "USDT" ? "USDT" : "VND",
+                  receive: currency === "USDT" ? vndAmount : amount,
+                  receiveCurrency: currency === "USDT" ? "VND" : "USDT",
+                },
+        }
       : null;
 
   res.json({
