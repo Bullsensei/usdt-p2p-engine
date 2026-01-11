@@ -1,3 +1,4 @@
+// server.js - Multi-Exchange Backend
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
@@ -188,14 +189,25 @@ function normalizeAds(rawData, tradeType, exchange) {
       const adv = ad.adv || {};
       const advertiser = ad.advertiser || {};
 
+      // Binance returns amounts in FIAT (VND), need to convert to USDT
+      const price = parseFloat(adv.price);
+      const surplusAmountVND = parseFloat(adv.surplusAmount);
+      const minLimitVND = parseFloat(adv.minSingleTransAmount);
+      const maxLimitVND = parseFloat(adv.dynamicMaxSingleTransAmount);
+
+      // Convert all VND amounts to USDT
+      const availableAmountUSDT = surplusAmountVND / price;
+      const minLimitUSDT = minLimitVND / price;
+      const maxLimitUSDT = maxLimitVND / price;
+
       return {
         id: `${exchange}_${adv.advNo}`,
         exchange: "Binance",
         type: tradeType,
-        price: parseFloat(adv.price),
-        availableAmount: parseFloat(adv.surplusAmount),
-        minLimit: parseFloat(adv.minSingleTransAmount),
-        maxLimit: parseFloat(adv.dynamicMaxSingleTransAmount),
+        price: price,
+        availableAmount: availableAmountUSDT,
+        minLimit: minLimitUSDT,
+        maxLimit: maxLimitUSDT,
         merchantName: advertiser.nickName,
         completionRate: parseFloat(advertiser.monthFinishRate) * 100,
         totalOrders: parseInt(advertiser.monthOrderCount) || 0,
@@ -211,16 +223,25 @@ function normalizeOKXAds(rawData, tradeType) {
 
   return ads
     .map((ad) => {
+      const price = parseFloat(ad.price);
+      const availableAmount = parseFloat(ad.availableAmount); // Already in USDT
+      const minLimitVND = parseFloat(ad.quoteMinAmountPerOrder);
+      const maxLimitVND = parseFloat(ad.quoteMaxAmountPerOrder);
+
+      // Convert VND limits to USDT
+      const minLimitUSDT = minLimitVND / price;
+      const maxLimitUSDT = maxLimitVND / price;
+
       return {
         id: `okx_${ad.id}`,
         exchange: "OKX",
         type: tradeType,
-        price: parseFloat(ad.price),
-        availableAmount: parseFloat(ad.availableAmount),
-        minLimit: parseFloat(ad.quoteMinAmountPerOrder),
-        maxLimit: parseFloat(ad.quoteMaxAmountPerOrder),
+        price: price,
+        availableAmount: availableAmount, // Already in USDT
+        minLimit: minLimitUSDT, // Convert from VND
+        maxLimit: maxLimitUSDT, // Convert from VND
         merchantName: ad.nickName,
-        completionRate: parseFloat(ad.completedRate) || 0,
+        completionRate: (parseFloat(ad.completedRate) || 0) * 100,
         totalOrders: parseInt(ad.completedOrderQuantity) || 0,
         paymentMethods: ad.paymentMethods || [],
         deepLink: `https://www.okx.com/p2p-markets/${ad.id}`,
@@ -389,163 +410,3 @@ app.get("/api/health", (req, res) => {
     },
   });
 });
-
-// Manual refresh endpoint
-app.post("/api/refresh", async (req, res) => {
-  console.log("Manual refresh triggered");
-  res.json({ status: "refresh started" });
-
-  // Update in background
-  updateSnapshots().catch((err) => {
-    console.error("Manual refresh failed:", err);
-  });
-});
-
-// Debug endpoint - shows detailed cache info
-app.get("/api/debug", (req, res) => {
-  res.json({
-    cache: {
-      binance_buy: {
-        count: cache.binance_buy.data.length,
-        timestamp: cache.binance_buy.timestamp,
-        error: cache.binance_buy.error,
-        sample: cache.binance_buy.data.slice(0, 2),
-      },
-      binance_sell: {
-        count: cache.binance_sell.data.length,
-        timestamp: cache.binance_sell.timestamp,
-        error: cache.binance_sell.error,
-        sample: cache.binance_sell.data.slice(0, 2),
-      },
-      okx_buy: {
-        count: cache.okx_buy.data.length,
-        timestamp: cache.okx_buy.timestamp,
-        error: cache.okx_buy.error,
-        sample: cache.okx_buy.data.slice(0, 2),
-      },
-      okx_sell: {
-        count: cache.okx_sell.data.length,
-        timestamp: cache.okx_sell.timestamp,
-        error: cache.okx_sell.error,
-        sample: cache.okx_sell.data.slice(0, 2),
-      },
-    },
-  });
-});
-
-app.post("/api/search", (req, res) => {
-  const { action, amount, currency } = req.body;
-
-  if (!action || !["buy", "sell"].includes(action)) {
-    return res.status(400).json({ error: "Invalid action" });
-  }
-
-  if (!amount || amount <= 0) {
-    return res.status(400).json({ error: "Invalid amount" });
-  }
-
-  if (!currency || !["VND", "USDT"].includes(currency)) {
-    return res.status(400).json({ error: "Invalid currency" });
-  }
-
-  // Combine data from all exchanges
-  const binanceKey = action === "buy" ? "binance_buy" : "binance_sell";
-  const okxKey = action === "buy" ? "okx_buy" : "okx_sell";
-
-  const allAds = [
-    ...(cache[binanceKey].data || []),
-    ...(cache[okxKey].data || []),
-  ];
-
-  if (allAds.length === 0) {
-    // Try to update snapshots immediately
-    console.log("No data available, triggering immediate update...");
-    updateSnapshots()
-      .then(() => {
-        console.log("Snapshot update completed");
-      })
-      .catch((err) => {
-        console.error("Snapshot update failed:", err);
-      });
-
-    return res.status(503).json({
-      error: "No data available. Please try again in a few seconds.",
-      details: {
-        binance: cache[binanceKey].error,
-        okx: cache[okxKey].error,
-      },
-    });
-  }
-
-  // Calculate amounts
-  let usdtAmount, vndAmount;
-
-  if (currency === "USDT") {
-    usdtAmount = amount;
-    const bestPrice =
-      action === "buy"
-        ? Math.min(...allAds.map((a) => a.price))
-        : Math.max(...allAds.map((a) => a.price));
-    vndAmount = usdtAmount * bestPrice;
-  } else {
-    vndAmount = amount;
-    const bestPrice =
-      action === "buy"
-        ? Math.min(...allAds.map((a) => a.price))
-        : Math.max(...allAds.map((a) => a.price));
-    usdtAmount = vndAmount / bestPrice;
-  }
-
-  // Run decision engine
-  const rankedOffers = rankOffers(allAds, usdtAmount, action === "buy");
-  const top5 = rankedOffers.slice(0, 5);
-
-  const actualReceive =
-    top5.length > 0
-      ? action === "buy"
-        ? { usdt: usdtAmount, vnd: usdtAmount * top5[0].price }
-        : { usdt: vndAmount / top5[0].price, vnd: vndAmount }
-      : null;
-
-  res.json({
-    query: { action, inputAmount: amount, inputCurrency: currency },
-    estimate: actualReceive,
-    offers: top5.map((offer) => ({
-      id: offer.id,
-      exchange: offer.exchange,
-      merchant: offer.merchantName,
-      price: offer.price,
-      available: offer.availableAmount,
-      limits: { min: offer.minLimit, max: offer.maxLimit },
-      completionRate: offer.completionRate.toFixed(1) + "%",
-      totalOrders: offer.totalOrders,
-      paymentMethods: offer.paymentMethods,
-      score: offer.score.toFixed(1),
-      deepLink: offer.deepLink,
-    })),
-    meta: {
-      totalAdsAvailable: allAds.length,
-      compatibleAds: rankedOffers.length,
-      sources: {
-        binance: cache[binanceKey].data.length,
-        okx: cache[okxKey].data.length,
-      },
-    },
-  });
-});
-
-// ============================================
-// STARTUP
-// ============================================
-const PORT = process.env.PORT || 3001;
-
-updateSnapshots().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 Cache updates every ${CACHE_DURATION / 1000 / 60} minutes`);
-  });
-});
-
-setInterval(updateSnapshots, CACHE_DURATION);
-
-module.exports = app;
